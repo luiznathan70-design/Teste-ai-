@@ -1,0 +1,294 @@
+// Ranchos Pizzaria — modelo de dados
+//
+// Convenções:
+// - Todos os valores monetários são inteiros em CENTAVOS (ex.: R$ 49,90 = 4990).
+// - Campos "enum" são String para manter compatibilidade entre SQLite (dev) e
+//   PostgreSQL (produção). Os valores válidos ficam em src/lib/constants.ts.
+// - Para usar PostgreSQL, troque `provider = "sqlite"` por `"postgresql"`
+//   e ajuste DATABASE_URL (veja README).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Configurações gerais do restaurante (linha única, id = 1)
+model Settings {
+  id             Int    @id @default(1)
+  name           String @default("Ranchos Pizzaria")
+  slogan         String @default("Sabor de rancho, feito com carinho")
+  logoUrl        String?
+  phone          String @default("")
+  whatsapp       String @default("") // somente dígitos com DDI, ex.: 5511999999999
+  email          String?
+  address        String @default("")
+  city           String @default("")
+  instagram      String?
+  pixKey         String @default("")
+  pixMerchant    String @default("RANCHOS PIZZARIA") // nome do recebedor (até 25 caracteres)
+  minOrder       Int    @default(0) // pedido mínimo para entrega, em centavos
+  prepTimeMin    Int    @default(40) // tempo estimado de entrega/preparo em minutos
+  aboutText      String @default("")
+  updatedAt      DateTime @updatedAt
+}
+
+// Horários por setor. weekday: 0 = domingo ... 6 = sábado. Horários "HH:mm".
+// Se closesAt < opensAt, o turno atravessa a meia-noite.
+model BusinessHour {
+  id       Int    @id @default(autoincrement())
+  sector   String // PIZZARIA | LANCHES | ALMOCO | CHURRASCO | BEBIDAS | SOBREMESAS
+  weekday  Int
+  opensAt  String
+  closesAt String
+
+  @@index([sector, weekday])
+}
+
+model Category {
+  id        Int       @id @default(autoincrement())
+  name      String
+  slug      String    @unique
+  sector    String
+  sortOrder Int       @default(0)
+  active    Boolean   @default(true)
+  products  Product[]
+}
+
+// kind:
+//  SIMPLE  -> preço fixo (basePrice) + adicionais opcionais
+//  PIZZA   -> sabor de pizza; preço por tamanho em PizzaPrice; aceita meio a meio e borda
+//  VARIANT -> escolhe uma variação (marmitex P/M/G, carne 500g/1kg, lata/2L...)
+model Product {
+  id          Int              @id @default(autoincrement())
+  name        String
+  slug        String           @unique
+  description String           @default("")
+  imageUrl    String?
+  kind        String           @default("SIMPLE")
+  basePrice   Int              @default(0)
+  paused      Boolean          @default(false)
+  featured    Boolean          @default(false)
+  tags        String           @default("") // separadas por vírgula: vegetariano,picante,doce
+  sortOrder   Int              @default(0)
+  categoryId  Int
+  category    Category         @relation(fields: [categoryId], references: [id])
+  variants    ProductVariant[]
+  pizzaPrices PizzaPrice[]
+  addonGroups AddonGroup[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([categoryId])
+}
+
+model ProductVariant {
+  id        Int     @id @default(autoincrement())
+  productId Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+  price     Int
+  sortOrder Int     @default(0)
+}
+
+model PizzaSize {
+  id         Int          @id @default(autoincrement())
+  name       String // Broto, Média, Grande, Família
+  slices     Int
+  maxFlavors Int          @default(1)
+  sortOrder  Int          @default(0)
+  active     Boolean      @default(true)
+  prices     PizzaPrice[]
+  crustPrices CrustPrice[]
+}
+
+model PizzaPrice {
+  productId Int
+  sizeId    Int
+  price     Int
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  size      PizzaSize @relation(fields: [sizeId], references: [id], onDelete: Cascade)
+
+  @@id([productId, sizeId])
+}
+
+// Bordas recheadas (preço varia por tamanho)
+model Crust {
+  id     Int          @id @default(autoincrement())
+  name   String
+  active Boolean      @default(true)
+  prices CrustPrice[]
+}
+
+model CrustPrice {
+  crustId Int
+  sizeId  Int
+  price   Int
+  crust   Crust     @relation(fields: [crustId], references: [id], onDelete: Cascade)
+  size    PizzaSize @relation(fields: [sizeId], references: [id], onDelete: Cascade)
+
+  @@id([crustId, sizeId])
+}
+
+// Grupos de adicionais (ex.: "Turbine seu lanche"), ligados a vários produtos
+model AddonGroup {
+  id        Int       @id @default(autoincrement())
+  name      String
+  minSelect Int       @default(0)
+  maxSelect Int       @default(10)
+  addons    Addon[]
+  products  Product[]
+}
+
+model Addon {
+  id      Int        @id @default(autoincrement())
+  groupId Int
+  group   AddonGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name    String
+  price   Int
+  active  Boolean    @default(true)
+}
+
+// Cardápio do dia do self-service. date no formato "YYYY-MM-DD".
+model DailyMenu {
+  id         Int             @id @default(autoincrement())
+  date       String          @unique
+  pricePerKg Int
+  notes      String          @default("")
+  items      DailyMenuItem[]
+}
+
+model DailyMenuItem {
+  id        Int       @id @default(autoincrement())
+  menuId    Int
+  menu      DailyMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  section   String // PRATOS | GUARNICOES | SALADAS | SOBREMESAS
+  name      String
+  sortOrder Int       @default(0)
+}
+
+model Neighborhood {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  fee       Int
+  active    Boolean   @default(true)
+  addresses Address[]
+}
+
+model Coupon {
+  id        Int       @id @default(autoincrement())
+  code      String    @unique
+  type      String // PERCENT | FIXED
+  value     Int // PERCENT: 10 = 10%; FIXED: centavos
+  minOrder  Int       @default(0)
+  maxUses   Int?
+  uses      Int       @default(0)
+  expiresAt DateTime?
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+}
+
+// Banners de promoção exibidos na página inicial
+model Promotion {
+  id          Int       @id @default(autoincrement())
+  title       String
+  description String    @default("")
+  imageUrl    String?
+  badge       String? // ex.: "-20%", "Terça"
+  link        String? // ex.: /cardapio?categoria=pizzas-salgadas
+  active      Boolean   @default(true)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  sortOrder   Int       @default(0)
+}
+
+model Testimonial {
+  id     Int     @id @default(autoincrement())
+  name   String
+  text   String
+  rating Int     @default(5)
+  active Boolean @default(true)
+}
+
+model User {
+  id           Int       @id @default(autoincrement())
+  name         String
+  email        String    @unique
+  phone        String?
+  passwordHash String
+  role         String    @default("CUSTOMER") // ADMIN | CUSTOMER
+  addresses    Address[]
+  orders       Order[]
+  createdAt    DateTime  @default(now())
+}
+
+model Address {
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label          String       @default("Casa")
+  street         String
+  number         String
+  complement     String?
+  reference      String?
+  neighborhoodId Int
+  neighborhood   Neighborhood @relation(fields: [neighborhoodId], references: [id])
+}
+
+model Order {
+  id               Int              @id @default(autoincrement())
+  code             String           @unique // código público para acompanhamento (ex.: RP4F7K)
+  userId           Int?
+  user             User?            @relation(fields: [userId], references: [id])
+  customerName     String
+  customerPhone    String
+  type             String // DELIVERY | PICKUP
+  street           String?
+  number           String?
+  complement       String?
+  reference        String?
+  neighborhoodName String?
+  subtotal         Int
+  deliveryFee      Int              @default(0)
+  discount         Int              @default(0)
+  total            Int
+  couponCode       String?
+  paymentMethod    String // PIX | CARD | CASH
+  changeFor        Int? // troco para (centavos)
+  paid             Boolean          @default(false)
+  status           String           @default("RECEBIDO")
+  notes            String?
+  items            OrderItem[]
+  history          OrderStatusLog[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([customerPhone])
+}
+
+model OrderItem {
+  id         Int     @id @default(autoincrement())
+  orderId    Int
+  order      Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId  Int?
+  name       String // cópia do nome no momento do pedido
+  sector     String
+  details    String  @default("[]") // JSON: linhas descritivas (tamanho, sabores, borda, adicionais)
+  quantity   Int
+  unitPrice  Int
+  totalPrice Int
+  notes      String?
+}
+
+model OrderStatusLog {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    String
+  createdAt DateTime @default(now())
+}
